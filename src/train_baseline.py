@@ -51,7 +51,6 @@ def build_pipeline(classifier: str):
         model = LogisticRegression(
             max_iter=1000,
             class_weight="balanced",
-            n_jobs=-1,
             random_state=DEFAULT_RANDOM_STATE,
         )
     elif classifier == "linearsvc":

@@ -6,3 +6,4 @@ results/
 data/processed/
 codex.md
 /treino_avaliacao*.csv
+data/raw/*backup*.csv

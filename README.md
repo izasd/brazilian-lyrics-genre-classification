@@ -7,7 +7,8 @@ Sistema experimental para classificar generos musicais brasileiros usando apenas
 - Entrada do modelo: somente `lyrics`.
 - Saida do modelo: `genre`.
 - Metadados como artista, nome da musica, emocoes ou valor numerico nao devem ser usados no treinamento.
-- O dataset final esperado fica em `data/raw/letras_generos.csv`.
+- O dataset final esperado fica em `data/raw/letras_generos_balanceado_sem_funk.csv`.
+- A base principal remove `funk carioca` e usa 1.480 letras por genero, balanceada pelo tamanho da classe `samba`.
 
 ## Estrutura
 
@@ -46,23 +47,23 @@ lyrics,genre
 Gerar a base processada:
 
 ```bash
-python -m src.data --input data/raw/letras_generos.csv --output data/processed/letras_processadas.csv
+python -m src.data
 ```
 
-O script remove nulos, letras muito curtas, duplicatas exatas e, por padrao, os generos `axe`, `pagode` e `trilha sonora` caso aparecam.
+O script remove nulos, letras muito curtas, duplicatas exatas e, por padrao, os generos `axe`, `funk carioca`, `pagode` e `trilha sonora` caso aparecam.
 
 ## Treinar Baseline TF-IDF
 
 Treinamento rapido, sem validacao cruzada:
 
 ```bash
-python -m src.train_baseline --data data/processed/letras_processadas.csv --no-cv
+python -m src.train_baseline --no-cv
 ```
 
 Treinamento com validacao cruzada k-fold:
 
 ```bash
-python -m src.train_baseline --data data/processed/letras_processadas.csv --folds 5
+python -m src.train_baseline --folds 5
 ```
 
 Classificadores disponiveis:
@@ -86,10 +87,18 @@ Artefatos gerados:
 python -m src.evaluate --all
 ```
 
+## Registro de Experimentos
+
+As etapas de treinamento, configuracoes e metricas ficam registradas em:
+
+```text
+docs/registro_treinamento.md
+```
+
 ## Analise Lexical
 
 ```bash
-python -m src.lexical_analysis --data data/processed/letras_processadas.csv
+python -m src.lexical_analysis --data data/processed/letras_processadas_balanceado_sem_funk.csv
 ```
 
 Saidas:
@@ -122,13 +131,13 @@ pip install tensorflow
 Treinar CNN:
 
 ```bash
-python -m src.train_cnn --data data/processed/letras_processadas.csv --epochs 5
+python -m src.train_cnn --data data/processed/letras_processadas_balanceado_sem_funk.csv --epochs 5
 ```
 
 Treinar LSTM:
 
 ```bash
-python -m src.train_lstm --data data/processed/letras_processadas.csv --epochs 5
+python -m src.train_lstm --data data/processed/letras_processadas_balanceado_sem_funk.csv --epochs 5
 ```
 
 O modulo `src.train_bertimbau` esta documentado como etapa opcional porque o fine-tuning de Transformers pode exigir mais memoria, tempo ou GPU.

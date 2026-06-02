@@ -10,7 +10,7 @@ from .io_utils import write_json
 from .preprocessing import clean_lyrics, normalize_label, word_count
 
 
-DEFAULT_EXCLUDED_GENRES = {"axe", "pagode", "trilha sonora"}
+DEFAULT_EXCLUDED_GENRES = {"axe", "funk carioca", "pagode", "trilha sonora"}
 
 
 def prepare_dataset(
@@ -136,4 +136,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
