@@ -34,7 +34,13 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-As dependencias neurais (`tensorflow`, `torch`, `transformers`) estao comentadas em `requirements.txt` porque sao mais pesadas. Instale-as apenas quando for treinar CNN, LSTM ou BERTimbau.
+Para treinar CNN ou LSTM com PyTorch:
+
+```bash
+pip install -r requirements-neural.txt
+```
+
+As dependencias de Transformers continuam opcionais porque sao mais pesadas.
 
 ## Preparar Dados
 
@@ -74,6 +80,15 @@ python -m src.train_baseline --classifier linearsvc
 python -m src.train_baseline --classifier nb
 ```
 
+Exemplos de variacoes do TF-IDF:
+
+```bash
+python -m src.train_baseline --experiment-name word_1_1 --ngram-min 1 --ngram-max 1 --no-cv
+python -m src.train_baseline --experiment-name word_1_3 --ngram-min 1 --ngram-max 3 --no-cv
+python -m src.train_baseline --experiment-name char_wb_3_5_100k --analyzer char_wb --ngram-min 3 --ngram-max 5 --max-features 100000 --no-cv
+python -m src.train_baseline --experiment-name word_char --feature-set word-char --no-cv
+```
+
 Artefatos gerados:
 
 - modelo em `models/`;
@@ -86,6 +101,16 @@ Artefatos gerados:
 ```bash
 python -m src.evaluate --all
 ```
+
+## Analisar Erros
+
+Gerar os principais pares de generos confundidos pelo baseline principal:
+
+```bash
+python -m src.error_analysis
+```
+
+As tabelas sao salvas em `results/analysis/` e a matriz de confusao normalizada em `results/figures/`.
 
 ## Registro de Experimentos
 
@@ -122,31 +147,33 @@ python -m src.predict --model baseline_tfidf_logreg --file exemplo_letra.txt
 
 ## Modelos Neurais
 
-Os modulos `src.train_cnn` e `src.train_lstm` implementam modelos Keras. Para usa-los, instale TensorFlow removendo o comentario correspondente em `requirements.txt` ou instalando manualmente:
-
-```bash
-pip install tensorflow
-```
+Os modulos `src.train_cnn` e `src.train_lstm` implementam modelos PyTorch. O dispositivo e escolhido automaticamente, usando CPU quando CUDA nao esta disponivel.
 
 Treinar CNN:
 
 ```bash
-python -m src.train_cnn --data data/processed/letras_processadas_balanceado_sem_funk.csv --epochs 5
+python -m src.train_cnn --epochs 8
 ```
 
 Treinar LSTM:
 
 ```bash
-python -m src.train_lstm --data data/processed/letras_processadas_balanceado_sem_funk.csv --epochs 5
+python -m src.train_lstm --epochs 8
+```
+
+Predizer com a CNN:
+
+```bash
+python -m src.predict --model cnn_pytorch --text "texto da letra aqui"
 ```
 
 O modulo `src.train_bertimbau` esta documentado como etapa opcional porque o fine-tuning de Transformers pode exigir mais memoria, tempo ou GPU.
 
-Proxima etapa sugerida:
+Proximas etapas sugeridas:
 
-1. Rodar o baseline TF-IDF e registrar metricas.
-2. Rodar CNN e LSTM com poucas epocas para comparacao inicial.
-3. Implementar/rodar BERTimbau como experimento opcional com Hugging Face Transformers.
+1. Rodar CNN e LSTM com poucas epocas para comparacao inicial.
+2. Comparar custo computacional, acuracia e F1 macro dos modelos.
+3. Implementar ou rodar BERTimbau como experimento opcional com Hugging Face Transformers.
 
 ## Observacao Sobre Reprodutibilidade
 
