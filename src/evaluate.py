@@ -68,7 +68,7 @@ def update_model_comparison(model_name: str, metrics: dict[str, Any], output_pat
     }
     rows: list[dict[str, Any]] = []
     if output_path.exists():
-        with output_path.open("r", encoding="utf-8", newline="") as f:
+        with output_path.open("r", encoding="utf-8-sig", newline="") as f:
             rows = list(csv.DictReader(f))
         rows = [existing for existing in rows if existing.get("model") != model_name]
     rows.append(row)

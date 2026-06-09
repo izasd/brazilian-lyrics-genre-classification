@@ -521,9 +521,578 @@ Interpretacao:
 - O resultado indica que, nesta base e configuracao, a representacao esparsa TF-IDF generaliza melhor do que embeddings treinados do zero.
 - Possiveis melhorias incluem embeddings pre-treinados em portugues, regularizacao adicional e ajuste da arquitetura; contudo, a comparacao inicial deve ser preservada como resultado experimental.
 
+## Execucao 07 - Primeira LSTM Bidirecional
+
+Data da execucao: 2026-06-09.
+
+Objetivo: avaliar se uma arquitetura recorrente bidirecional, capaz de considerar a ordem das palavras nos dois sentidos, melhoraria a classificacao em relacao a CNN textual e aos baselines TF-IDF.
+
+Alteracao implementada:
+
+- A BiLSTM passou a usar `pack_padded_sequence` com o comprimento real de cada letra.
+- Os tokens de preenchimento a direita deixaram de influenciar os estados finais usados pelo classificador.
+- A interface permaneceu compativel com o modulo de predicao e com a CNN existente.
+
+Arquitetura:
+
+| Componente | Configuracao |
+| --- | --- |
+| Vocabulario maximo | 30.000 palavras |
+| Tamanho real do vocabulario | 30.000 palavras |
+| Comprimento maximo | 300 tokens |
+| Embedding | 128 dimensoes, treinavel |
+| Camada recorrente | LSTM bidirecional |
+| Unidades por direcao | 96 |
+| Representacao final | concatenacao dos estados finais das duas direcoes |
+| Dropout | 0.5 |
+| Saida | 9 classes com logits |
+| Otimizador | AdamW |
+| Taxa de aprendizado | 0.001 |
+| Funcao de perda | entropia cruzada |
+
+Protocolo:
+
+| Item | Valor |
+| --- | ---: |
+| Treino | 9.590 |
+| Validacao | 1.066 |
+| Teste | 2.664 |
+| Batch size | 128 |
+| Epocas solicitadas | 8 |
+| Epocas executadas | 7 |
+| Paciencia do early stopping | 2 |
+| Dispositivo | CPU |
+| Tempo de treinamento | 1.717,0 segundos |
+| Melhor perda de validacao | 2.0395 |
+
+Comando executado:
+
+```bash
+python -m src.train_lstm --epochs 8 --batch-size 128 --max-words 30000 --max-len 300 --embedding-dim 128 --hidden-dim 96 --dropout 0.5 --learning-rate 0.001 --patience 2 --device cpu
+```
+
+Resultados:
+
+| Modelo | Acuracia | Precisao macro | Revocacao macro | F1 macro |
+| --- | ---: | ---: | ---: | ---: |
+| LSTM bidirecional PyTorch | 0.2083 | 0.2048 | 0.2083 | 0.2020 |
+| CNN PyTorch | 0.2294 | 0.2364 | 0.2294 | 0.1959 |
+| TF-IDF palavras 1-2 | 0.2842 | 0.2733 | 0.2842 | 0.2744 |
+| TF-IDF palavras + caracteres | 0.2860 | 0.2788 | 0.2860 | 0.2805 |
+
+Metricas por genero da LSTM bidirecional:
+
+| Genero | Precisao | Revocacao | F1-score | Suporte |
+| --- | ---: | ---: | ---: | ---: |
+| forro | 0.1834 | 0.2095 | 0.1956 | 296 |
+| gospel/religioso | 0.1888 | 0.1588 | 0.1725 | 296 |
+| mpb | 0.2188 | 0.1182 | 0.1535 | 296 |
+| pop | 0.1924 | 0.2230 | 0.2066 | 296 |
+| rap | 0.2550 | 0.3446 | 0.2931 | 296 |
+| rock | 0.2047 | 0.2365 | 0.2194 | 296 |
+| romantico | 0.1656 | 0.0845 | 0.1119 | 296 |
+| samba | 0.1930 | 0.2230 | 0.2069 | 296 |
+| sertanejo | 0.2419 | 0.2770 | 0.2583 | 296 |
+
+Distribuicao das previsoes:
+
+| Genero previsto | Quantidade | Percentual |
+| --- | ---: | ---: |
+| rap | 400 | 15.02% |
+| pop | 343 | 12.88% |
+| rock | 342 | 12.84% |
+| samba | 342 | 12.84% |
+| sertanejo | 339 | 12.73% |
+| forro | 338 | 12.69% |
+| gospel/religioso | 249 | 9.35% |
+| mpb | 160 | 6.01% |
+| romantico | 151 | 5.67% |
+
+Artefatos gerados:
+
+| Conteudo | Caminho |
+| --- | --- |
+| Pesos e configuracao | `models/lstm_pytorch.pt` |
+| Vocabulario | `models/lstm_pytorch_vocabulary.json` |
+| Rotulos | `models/lstm_pytorch_labels.json` |
+| Metricas e historico | `results/metrics/lstm_pytorch_metrics.json` |
+| Curvas de treinamento | `results/figures/training_history_lstm_pytorch.png` |
+| Matriz de confusao | `results/figures/confusion_matrix_lstm_pytorch.png` |
+
+Interpretacao:
+
+- A LSTM bidirecional ficou abaixo da CNN em acuracia, mas obteve F1 macro ligeiramente maior.
+- A distribuicao das previsoes foi consideravelmente mais equilibrada que a da CNN, reduzindo a concentracao excessiva em `forro`.
+- `rap` apresentou o melhor F1 da LSTM, seguido por `sertanejo`; `romantico` permaneceu como a classe mais dificil.
+- A perda de treino caiu continuamente, enquanto a perda de validacao parou de melhorar apos a quinta epoca. O treinamento foi encerrado na setima epoca e os pesos da quinta epoca foram restaurados.
+- A BiLSTM exigiu aproximadamente 4,3 vezes o tempo de treinamento da CNN em CPU e nao superou os modelos TF-IDF.
+- Os resultados reforcam que, para esta quantidade de dados, embeddings treinados do zero ainda generalizam pior que a representacao esparsa de palavras e caracteres.
+
+## Execucao 08 - LSTM Bidirecional com GloVe em Portugues
+
+Data da execucao: 2026-06-09.
+
+Objetivo: verificar se embeddings pre-treinados em portugues melhorariam a BiLSTM, mantendo o restante do protocolo comparavel ao da Execucao 07.
+
+Fonte dos embeddings:
+
+| Item | Valor |
+| --- | --- |
+| Modelo | NILC GloVe 100d |
+| Repositorio | `nilc-nlp/glove-100d` |
+| Idioma | portugues brasileiro e europeu |
+| Dimensoes | 100 |
+| Licenca informada no repositorio | LGPL-3.0 |
+| Ajuste durante o treino | habilitado |
+
+Alteracoes implementadas:
+
+- `src.train_lstm` passou a aceitar `--pretrained-embeddings nilc-glove-100d`.
+- O pipeline baixa os vetores pelo Hugging Face Hub e carrega somente as linhas correspondentes ao vocabulario do experimento.
+- As palavras sem vetor pre-treinado mantem a inicializacao aleatoria.
+- O token de padding permanece com vetor zerado.
+- As metricas registram fonte, cobertura e congelamento dos embeddings.
+- `--experiment-name` permite preservar os artefatos da LSTM anterior.
+
+Cobertura:
+
+| Item | Valor |
+| --- | ---: |
+| Palavras elegiveis no vocabulario | 29.998 |
+| Palavras encontradas no GloVe | 20.429 |
+| Cobertura | 68,10% |
+
+Protocolo:
+
+| Item | Valor |
+| --- | ---: |
+| Treino | 9.590 |
+| Validacao | 1.066 |
+| Teste | 2.664 |
+| Comprimento maximo | 300 tokens |
+| Unidades da BiLSTM por direcao | 96 |
+| Batch size | 128 |
+| Dropout | 0.5 |
+| Taxa de aprendizado | 0.001 |
+| Epocas solicitadas | 8 |
+| Epocas executadas | 7 |
+| Paciencia do early stopping | 2 |
+| Dispositivo | CPU |
+| Tempo de treinamento | 1.731,9 segundos |
+| Melhor perda de validacao | 1.9968 |
+
+Comando executado:
+
+```bash
+python -m src.train_lstm --experiment-name lstm_pytorch_nilc_glove_100d --pretrained-embeddings nilc-glove-100d --epochs 8 --batch-size 128 --max-words 30000 --max-len 300 --embedding-dim 100 --hidden-dim 96 --dropout 0.5 --learning-rate 0.001 --patience 2 --device cpu
+```
+
+Resultados:
+
+| Modelo | Acuracia | Precisao macro | Revocacao macro | F1 macro |
+| --- | ---: | ---: | ---: | ---: |
+| LSTM + NILC GloVe 100d | 0.2297 | 0.2239 | 0.2297 | 0.2066 |
+| LSTM com embedding aleatorio | 0.2083 | 0.2048 | 0.2083 | 0.2020 |
+| CNN com embedding aleatorio | 0.2294 | 0.2364 | 0.2294 | 0.1959 |
+| TF-IDF palavras 1-2 | 0.2842 | 0.2733 | 0.2842 | 0.2744 |
+| TF-IDF palavras + caracteres | 0.2860 | 0.2788 | 0.2860 | 0.2805 |
+
+Metricas por genero:
+
+| Genero | Precisao | Revocacao | F1-score | Suporte |
+| --- | ---: | ---: | ---: | ---: |
+| forro | 0.2107 | 0.2534 | 0.2301 | 296 |
+| gospel/religioso | 0.2353 | 0.1622 | 0.1920 | 296 |
+| mpb | 0.2791 | 0.0405 | 0.0708 | 296 |
+| pop | 0.1748 | 0.2534 | 0.2069 | 296 |
+| rap | 0.2809 | 0.5068 | 0.3614 | 296 |
+| rock | 0.2007 | 0.1993 | 0.2000 | 296 |
+| romantico | 0.0941 | 0.0270 | 0.0420 | 296 |
+| samba | 0.3018 | 0.2264 | 0.2587 | 296 |
+| sertanejo | 0.2374 | 0.3986 | 0.2976 | 296 |
+
+Distribuicao das previsoes:
+
+| Genero previsto | Quantidade | Percentual |
+| --- | ---: | ---: |
+| rap | 534 | 20,05% |
+| sertanejo | 497 | 18,66% |
+| pop | 429 | 16,10% |
+| forro | 356 | 13,36% |
+| rock | 294 | 11,04% |
+| samba | 222 | 8,33% |
+| gospel/religioso | 204 | 7,66% |
+| romantico | 85 | 3,19% |
+| mpb | 43 | 1,61% |
+
+Artefatos gerados:
+
+| Conteudo | Caminho |
+| --- | --- |
+| Pesos e configuracao | `models/lstm_pytorch_nilc_glove_100d.pt` |
+| Vocabulario | `models/lstm_pytorch_nilc_glove_100d_vocabulary.json` |
+| Rotulos | `models/lstm_pytorch_nilc_glove_100d_labels.json` |
+| Metricas e historico | `results/metrics/lstm_pytorch_nilc_glove_100d_metrics.json` |
+| Curvas de treinamento | `results/figures/training_history_lstm_pytorch_nilc_glove_100d.png` |
+| Matriz de confusao | `results/figures/confusion_matrix_lstm_pytorch_nilc_glove_100d.png` |
+
+Interpretacao:
+
+- Os embeddings pre-treinados aumentaram a acuracia da BiLSTM em 0.0214 e o F1 macro em 0.0046.
+- A nova BiLSTM igualou aproximadamente a acuracia da CNN e obteve F1 macro superior.
+- `rap`, `sertanejo` e `samba` se beneficiaram da inicializacao pre-treinada.
+- A distribuicao voltou a se concentrar em algumas classes; `mpb` e `romantico` foram raramente previstos e tiveram queda de F1.
+- O tempo de treinamento permaneceu praticamente igual ao da LSTM com embeddings aleatorios.
+- A cobertura de 68,10% foi suficiente para produzir ganho, mas o resultado continuou abaixo dos modelos TF-IDF.
+- O experimento confirma que embeddings pre-treinados ajudam, mas nao resolvem a sobreposicao lexical entre os generos nem a baixa separacao das classes mais dificeis.
+
+## Execucao 09 - Ajuste de Regularizacao da LSTM com GloVe
+
+Data da execucao: 2026-06-09.
+
+Objetivo: reduzir o sobreajuste observado nas LSTMs e selecionar os pesos de acordo com a metrica principal do projeto, o F1 macro.
+
+Alteracoes implementadas:
+
+- O historico passou a registrar F1 macro de validacao por epoca.
+- O early stopping pode monitorar `valid_loss` ou `valid_f1_macro`.
+- Foram adicionados parametros para `weight_decay`, label smoothing e clipping de gradiente.
+- A leitura da tabela comparativa passou a aceitar arquivos UTF-8 com ou sem BOM.
+- Os valores padrao anteriores foram preservados para manter compatibilidade com as execucoes existentes.
+
+Configuracao ajustada:
+
+| Componente | Execucao 08 | Execucao 09 |
+| --- | ---: | ---: |
+| Dimensoes do GloVe | 100 | 100 |
+| Unidades por direcao | 96 | 64 |
+| Dropout | 0.5 | 0.6 |
+| `weight_decay` | 0.01 | 0.02 |
+| Label smoothing | 0.0 | 0.05 |
+| Clipping de gradiente | nao aplicado | 1.0 |
+| Monitor do early stopping | perda de validacao | F1 macro de validacao |
+| Paciencia | 2 | 3 |
+
+Protocolo:
+
+| Item | Valor |
+| --- | ---: |
+| Treino | 9.590 |
+| Validacao | 1.066 |
+| Teste | 2.664 |
+| Vocabulario | 30.000 palavras |
+| Cobertura do GloVe | 68,10% |
+| Comprimento maximo | 300 tokens |
+| Batch size | 128 |
+| Taxa de aprendizado | 0.001 |
+| Epocas solicitadas | 10 |
+| Epocas executadas | 9 |
+| Melhor epoca | 6 |
+| Melhor F1 macro de validacao | 0.2143 |
+| Dispositivo | CPU |
+| Tempo de treinamento | 1.538,7 segundos |
+
+Comando executado:
+
+```bash
+python -m src.train_lstm --experiment-name lstm_pytorch_nilc_glove_100d_tuned --pretrained-embeddings nilc-glove-100d --epochs 10 --batch-size 128 --max-words 30000 --max-len 300 --embedding-dim 100 --hidden-dim 64 --dropout 0.6 --learning-rate 0.001 --weight-decay 0.02 --label-smoothing 0.05 --gradient-clip 1.0 --monitor valid_f1_macro --patience 3 --device cpu
+```
+
+Resultados:
+
+| Modelo | Acuracia | Precisao macro | Revocacao macro | F1 macro |
+| --- | ---: | ---: | ---: | ---: |
+| LSTM + GloVe ajustada | 0.2264 | 0.2135 | 0.2264 | 0.2103 |
+| LSTM + GloVe original | 0.2297 | 0.2239 | 0.2297 | 0.2066 |
+| LSTM com embedding aleatorio | 0.2083 | 0.2048 | 0.2083 | 0.2020 |
+| CNN com embedding aleatorio | 0.2294 | 0.2364 | 0.2294 | 0.1959 |
+| TF-IDF palavras 1-2 | 0.2842 | 0.2733 | 0.2842 | 0.2744 |
+| TF-IDF palavras + caracteres | 0.2860 | 0.2788 | 0.2860 | 0.2805 |
+
+Metricas por genero:
+
+| Genero | Precisao | Revocacao | F1-score | Suporte |
+| --- | ---: | ---: | ---: | ---: |
+| forro | 0.2283 | 0.2128 | 0.2203 | 296 |
+| gospel/religioso | 0.2216 | 0.1453 | 0.1755 | 296 |
+| mpb | 0.1867 | 0.1047 | 0.1342 | 296 |
+| pop | 0.1825 | 0.1622 | 0.1717 | 296 |
+| rap | 0.2982 | 0.3818 | 0.3348 | 296 |
+| rock | 0.2185 | 0.2872 | 0.2482 | 296 |
+| romantico | 0.1111 | 0.0304 | 0.0477 | 296 |
+| samba | 0.2101 | 0.4088 | 0.2775 | 296 |
+| sertanejo | 0.2647 | 0.3041 | 0.2830 | 296 |
+
+Distribuicao das previsoes:
+
+| Genero previsto | Quantidade | Percentual |
+| --- | ---: | ---: |
+| samba | 576 | 21,62% |
+| rock | 389 | 14,60% |
+| rap | 379 | 14,23% |
+| sertanejo | 340 | 12,76% |
+| forro | 276 | 10,36% |
+| pop | 263 | 9,87% |
+| gospel/religioso | 194 | 7,28% |
+| mpb | 166 | 6,23% |
+| romantico | 81 | 3,04% |
+
+Artefatos gerados:
+
+| Conteudo | Caminho |
+| --- | --- |
+| Pesos e configuracao | `models/lstm_pytorch_nilc_glove_100d_tuned.pt` |
+| Vocabulario | `models/lstm_pytorch_nilc_glove_100d_tuned_vocabulary.json` |
+| Rotulos | `models/lstm_pytorch_nilc_glove_100d_tuned_labels.json` |
+| Metricas e historico | `results/metrics/lstm_pytorch_nilc_glove_100d_tuned_metrics.json` |
+| Curvas de treinamento | `results/figures/training_history_lstm_pytorch_nilc_glove_100d_tuned.png` |
+| Matriz de confusao | `results/figures/confusion_matrix_lstm_pytorch_nilc_glove_100d_tuned.png` |
+
+Interpretacao:
+
+- A configuracao ajustada atingiu o melhor F1 macro entre os modelos neurais, com ganho de 0.0037 sobre a LSTM GloVe original.
+- A acuracia caiu 0.0034, mostrando que a melhoria ocorreu principalmente pelo maior equilibrio entre as classes.
+- O F1 de `mpb` aumentou de 0.0708 para 0.1342 e o de `rock` de 0.2000 para 0.2482.
+- `rap` perdeu parte do desempenho, mas permaneceu como a classe de maior F1.
+- `romantico` continuou com baixa revocacao, indicando que regularizacao e reducao da arquitetura nao resolvem sua sobreposicao lexical.
+- As previsoes ficaram menos concentradas em `rap`, `sertanejo` e `pop`, mas passaram a favorecer `samba`.
+- O modelo ajustado ainda ficou abaixo dos baselines TF-IDF; novos ajustes incrementais na mesma arquitetura tem retorno provavelmente limitado.
+
+## Execucao 10 - BERTimbau com Encoder Congelado
+
+Data da execucao: 2026-06-09.
+
+Objetivo: avaliar representacoes contextuais pre-treinadas em portugues usando BERTimbau, com uma configuracao compativel com o ambiente de 16 GB de RAM e sem GPU CUDA.
+
+Modelo:
+
+| Item | Valor |
+| --- | --- |
+| Checkpoint | `neuralmind/bert-base-portuguese-cased` |
+| Arquitetura | BERT Base |
+| Camadas do encoder | 12 |
+| Parametros totais carregados | 108.930.057 |
+| Parametros treinaveis | 6.921 |
+| Estrategia | encoder congelado e classificador linear treinavel |
+| Biblioteca | Transformers 5.10.2 |
+| Backend | PyTorch 2.12.0 CPU |
+
+Alteracoes implementadas:
+
+- `src.train_bertimbau` deixou de ser um placeholder e passou a executar treinamento e avaliacao completos.
+- Foram adicionados divisao estratificada, early stopping por F1 macro, acumulacao de gradiente, warmup, clipping e congelamento parcial ou total do encoder.
+- Para o encoder totalmente congelado, o script pode calcular os vetores contextuais uma unica vez com `--cache-frozen-features`.
+- O classificador e treinado sobre os vetores `[CLS]` armazenados em memoria, evitando repetir o BERT a cada epoca.
+- `src.predict` passou a carregar e usar modelos Transformers salvos como diretorios Hugging Face.
+- As dependencias opcionais foram registradas em `requirements-transformer.txt`.
+
+Protocolo:
+
+| Item | Valor |
+| --- | ---: |
+| Treino | 9.590 |
+| Validacao | 1.066 |
+| Teste | 2.664 |
+| Comprimento maximo | 128 subwords |
+| Batch do encoder | 64 |
+| Batch do classificador | 256 |
+| Taxa de aprendizado | 0.001 |
+| `weight_decay` | 0.01 |
+| Warmup | 10% |
+| Clipping de gradiente | 1.0 |
+| Epocas solicitadas | 20 |
+| Epocas executadas | 14 |
+| Melhor epoca | 10 |
+| Melhor F1 macro de validacao | 0.2246 |
+| Paciencia | 4 |
+| Tempo de extracao dos vetores | 1.417,1 segundos |
+| Tempo total | 1.419,9 segundos |
+| Dispositivo | CPU |
+
+Comando executado:
+
+```bash
+python -m src.train_bertimbau --experiment-name bertimbau_base_frozen --epochs 20 --batch-size 64 --classifier-batch-size 256 --max-len 128 --learning-rate 0.001 --weight-decay 0.01 --warmup-ratio 0.1 --gradient-clip 1.0 --trainable-encoder-layers 0 --cache-frozen-features --patience 4 --device cpu
+```
+
+Resultados:
+
+| Modelo | Acuracia | Precisao macro | Revocacao macro | F1 macro |
+| --- | ---: | ---: | ---: | ---: |
+| BERTimbau com encoder congelado | 0.2301 | 0.2189 | 0.2301 | 0.2151 |
+| LSTM + GloVe ajustada | 0.2264 | 0.2135 | 0.2264 | 0.2103 |
+| LSTM + GloVe original | 0.2297 | 0.2239 | 0.2297 | 0.2066 |
+| CNN com embedding aleatorio | 0.2294 | 0.2364 | 0.2294 | 0.1959 |
+| TF-IDF palavras 1-2 | 0.2842 | 0.2733 | 0.2842 | 0.2744 |
+| TF-IDF palavras + caracteres | 0.2860 | 0.2788 | 0.2860 | 0.2805 |
+
+Metricas por genero:
+
+| Genero | Precisao | Revocacao | F1-score | Suporte |
+| --- | ---: | ---: | ---: | ---: |
+| forro | 0.2220 | 0.3277 | 0.2647 | 296 |
+| gospel/religioso | 0.2151 | 0.1926 | 0.2032 | 296 |
+| mpb | 0.1458 | 0.0946 | 0.1148 | 296 |
+| pop | 0.2029 | 0.1419 | 0.1670 | 296 |
+| rap | 0.2807 | 0.4324 | 0.3404 | 296 |
+| rock | 0.2257 | 0.2196 | 0.2226 | 296 |
+| romantico | 0.1582 | 0.0845 | 0.1101 | 296 |
+| samba | 0.2616 | 0.1520 | 0.1923 | 296 |
+| sertanejo | 0.2577 | 0.4257 | 0.3210 | 296 |
+
+Distribuicao das previsoes:
+
+| Genero previsto | Quantidade | Percentual |
+| --- | ---: | ---: |
+| sertanejo | 489 | 18,36% |
+| rap | 456 | 17,12% |
+| forro | 437 | 16,40% |
+| rock | 288 | 10,81% |
+| gospel/religioso | 265 | 9,95% |
+| pop | 207 | 7,77% |
+| mpb | 192 | 7,21% |
+| samba | 172 | 6,46% |
+| romantico | 158 | 5,93% |
+
+Artefatos gerados:
+
+| Conteudo | Caminho |
+| --- | --- |
+| Modelo e tokenizer | `models/bertimbau_base_frozen/` |
+| Configuracao de inferencia | `models/bertimbau_base_frozen/training_config.json` |
+| Metricas e historico | `results/metrics/bertimbau_base_frozen_metrics.json` |
+| Curvas de treinamento | `results/figures/training_history_bertimbau_base_frozen.png` |
+| Matriz de confusao | `results/figures/confusion_matrix_bertimbau_base_frozen.png` |
+
+Interpretacao:
+
+- O BERTimbau congelado atingiu o melhor F1 macro entre os modelos neurais, superando a LSTM GloVe ajustada em 0.0048.
+- O ganho confirma que representacoes contextuais em portugues ajudam mesmo sem atualizar o encoder.
+- `rap` e `sertanejo` apresentaram os melhores F1-scores, enquanto `mpb` e `romantico` permaneceram entre as classes mais dificeis.
+- O classificador concentrou previsoes em `sertanejo`, `rap` e `forro`, mas manteve distribuicao menos extrema que a primeira CNN.
+- Quase todo o custo computacional ocorreu na unica passagem de extracao dos vetores; as 14 epocas do classificador consumiram menos de tres segundos adicionais.
+- O modelo ocupa aproximadamente 436 MB, muito mais que as LSTMs, e ainda ficou abaixo dos baselines TF-IDF.
+- Um fine-tuning parcial ou completo do encoder pode melhorar o resultado, mas exigiria custo substancialmente maior em CPU.
+
+## Execucao 11 - Consolidacao Final dos Modelos
+
+Data da execucao: 2026-06-09.
+
+Objetivo: comparar as principais familias de modelos em desempenho, tempo de treinamento, tamanho para inferencia e estabilidade experimental.
+
+Alteracoes implementadas:
+
+- O baseline passou a registrar `training_seconds` e `model_size_bytes`.
+- Os dois finalistas TF-IDF foram reproduzidos sem validacao cruzada para medir custo e tamanho no ambiente atual.
+- A CNN foi reproduzida para restaurar seu artefato e medir o pacote completo de inferencia.
+- O modulo `src.final_comparison` passou a gerar tabela, grafico e recomendacao final de forma automatizada.
+- O tamanho dos modelos neurais inclui pesos, vocabulario e rotulos; o tamanho do BERTimbau inclui modelo, tokenizer e configuracoes.
+
+Comandos executados:
+
+```bash
+python -m src.train_baseline --classifier logreg --experiment-name word_1_2_final --ngram-min 1 --ngram-max 2 --no-cv
+python -m src.train_baseline --classifier logreg --feature-set word-char --experiment-name word_char_final --no-cv
+python -m src.train_cnn --epochs 8 --batch-size 128 --max-words 30000 --max-len 300 --embedding-dim 128 --hidden-dim 96 --dropout 0.5 --learning-rate 0.001 --patience 2 --device cpu
+python -m src.final_comparison
+```
+
+Comparacao consolidada:
+
+| Modelo | Acuracia | F1 macro teste | F1 macro CV | Tempo | Tamanho |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| TF-IDF palavras + caracteres | 0.2860 | 0.2805 | 0.2637 | 49,1 s | 12,4 MB |
+| TF-IDF palavras 1-2 | 0.2842 | 0.2744 | 0.2668 | 11,7 s | 5,3 MB |
+| BERTimbau congelado | 0.2301 | 0.2151 | nao executada | 23,7 min | 416,2 MB |
+| BiLSTM + GloVe ajustada | 0.2264 | 0.2103 | nao executada | 25,6 min | 12,4 MB |
+| BiLSTM com embedding aleatorio | 0.2083 | 0.2020 | nao executada | 28,6 min | 16,0 MB |
+| CNN reproduzida | 0.2305 | 0.1926 | nao executada | 3,7 min | 15,9 MB |
+
+Observacao sobre a reproducao da CNN:
+
+- A Execucao 06 havia obtido acuracia 0.2294, F1 macro 0.1959 e tempo de 399,4 segundos.
+- A reproducao obteve acuracia 0.2305, F1 macro 0.1926 e tempo de 223,8 segundos.
+- A pequena variacao e compatível com diferencas numericas e de execucao em CPU; a conclusao comparativa nao mudou.
+
+Relacoes de custo:
+
+- O BERTimbau levou aproximadamente 121 vezes o tempo do TF-IDF de palavras e ocupou 78 vezes mais espaco.
+- A BiLSTM GloVe ajustada levou aproximadamente 131 vezes o tempo do TF-IDF de palavras.
+- O TF-IDF combinado aumentou o F1 macro de teste em 0.0061 sobre o modelo de palavras, mas exigiu 4,2 vezes o tempo e 2,3 vezes o espaco.
+- Todos os modelos neurais ficaram abaixo dos dois finalistas TF-IDF no conjunto de teste.
+
+Decisao final:
+
+```text
+Modelo principal recomendado: TF-IDF de palavras 1-2 com Logistic Regression.
+```
+
+Justificativa:
+
+- apresentou o maior F1 macro medio na validacao cruzada entre os finalistas;
+- ficou apenas 0.0061 abaixo do melhor F1 no teste externo;
+- foi o modelo mais rapido e o menor entre os comparados;
+- oferece interpretabilidade direta dos termos e implantacao simples;
+- apresentou melhor equilibrio entre generalizacao, custo e desempenho.
+
+O modelo combinado de palavras e caracteres permanece como o melhor resultado pontual no teste externo. O BERTimbau congelado e o melhor modelo neural, mas seu custo e tamanho nao se justificam diante do desempenho inferior.
+
+Artefatos gerados:
+
+| Conteudo | Caminho |
+| --- | --- |
+| Tabela final | `results/metrics/comparacao_final_modelos.csv` |
+| Grafico final | `results/figures/comparacao_final_modelos.png` |
+| Recomendacao estruturada | `results/analysis/recomendacao_modelo_final.json` |
+| Modelo principal | `models/baseline_tfidf_logreg_word_1_2_final.joblib` |
+| Melhor teste externo | `models/baseline_tfidf_logreg_word_char_final.joblib` |
+
+## Execucao 12 - Operacionalizacao do Modelo Principal
+
+Data da execucao: 2026-06-09.
+
+Objetivo: tornar a recomendacao final o comportamento padrao do sistema, validar o checkpoint definitivo e documentar seu uso e suas limitacoes.
+
+Alteracoes implementadas:
+
+- `src.predict` passou a usar `--model best` por padrao.
+- `src.error_analysis` passou a analisar `best` por padrao.
+- Ambos consultam `results/analysis/recomendacao_modelo_final.json`, evitando nomes fixos de checkpoints antigos.
+- Os exemplos do README passaram a funcionar com os artefatos realmente gerados.
+- Foi criado `docs/model_card.md` com dados, metricas, usos pretendidos, limitacoes e consideracoes eticas.
+
+Comandos validados:
+
+```bash
+python -m src.predict --text "Eu canto o amor e a saudade no meu coracao"
+python -m src.error_analysis
+```
+
+Resultado da verificacao de reprodutibilidade:
+
+| Item | Execucao 05 | Checkpoint final |
+| --- | ---: | ---: |
+| Exemplos de teste | 2.664 | 2.664 |
+| Predicoes corretas | 757 | 757 |
+| Erros | 1.907 | 1.907 |
+| Acuracia | 0.2842 | 0.2842 |
+| Principal par confundido | rap e rock | rap e rock |
+| Erros no principal par | 132 | 132 |
+
+Os dez principais pares confundidos foram reproduzidos exatamente, confirmando que o checkpoint final corresponde a configuracao escolhida nas etapas anteriores.
+
+Artefatos gerados:
+
+| Conteudo | Caminho |
+| --- | --- |
+| Model card | `docs/model_card.md` |
+| Relatorio final de erros | `results/analysis/relatorio_erros_baseline_tfidf_logreg_word_1_2_final.json` |
+| Pares confundidos | `results/analysis/pares_confundidos_baseline_tfidf_logreg_word_1_2_final.csv` |
+| Resumo por genero | `results/analysis/resumo_erros_por_genero_baseline_tfidf_logreg_word_1_2_final.csv` |
+| Matriz normalizada | `results/figures/confusion_matrix_normalized_baseline_tfidf_logreg_word_1_2_final.png` |
+
 ## Proximas Rodadas Planejadas
 
-1. Treinar uma LSTM bidirecional com o mesmo conjunto de treino e teste.
-2. Comparar custo computacional, acuracia e F1 macro de TF-IDF, CNN e LSTM.
-3. Avaliar se embeddings pre-treinados em portugues justificam um experimento adicional.
-4. Registrar todos os novos experimentos neste documento.
+1. Considerar fine-tuning parcial do BERTimbau somente se houver acesso a GPU.
+2. Avaliar abordagens multimodais com audio em trabalhos futuros.
+3. Usar o TF-IDF de palavras 1-2 como modelo principal do sistema atual.

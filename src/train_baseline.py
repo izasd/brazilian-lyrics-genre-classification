@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 from pathlib import Path
 from statistics import mean, pstdev
 
@@ -191,6 +192,7 @@ def train_baseline(
         random_state=random_state,
     )
 
+    started_at = time.perf_counter()
     cv_report = (
         None
         if no_cv
@@ -218,6 +220,7 @@ def train_baseline(
         max_features=max_features,
     )
     pipeline.fit(train_df["lyrics"], train_df["genre"])
+    training_seconds = time.perf_counter() - started_at
     predictions = list(pipeline.predict(test_df["lyrics"]))
     y_true = list(test_df["genre"])
     labels = sorted(df["genre"].unique())
@@ -258,10 +261,12 @@ def train_baseline(
         }
     metrics["class_distribution"] = {str(k): int(v) for k, v in df["genre"].value_counts().to_dict().items()}
     metrics["cross_validation"] = cv_report
+    metrics["training_seconds"] = training_seconds
 
     model_path = MODELS_DIR / f"{model_name}.joblib"
     joblib.dump(pipeline, model_path)
     metrics["model_path"] = str(model_path)
+    metrics["model_size_bytes"] = model_path.stat().st_size
 
     metrics_path = METRICS_DIR / f"{model_name}_metrics.json"
     write_json(metrics_path, metrics)

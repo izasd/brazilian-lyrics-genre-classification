@@ -14,13 +14,20 @@ from .config import (
     MODELS_DIR,
     ensure_project_dirs,
 )
-from .io_utils import require_package, safe_slug, write_json
+from .io_utils import read_json, require_package, safe_slug, write_json
 
 
 def resolve_model_path(model: str) -> Path:
     path = Path(model)
     if path.exists():
         return path
+    if model == "best":
+        recommendation_path = ANALYSIS_DIR / "recomendacao_modelo_final.json"
+        if not recommendation_path.exists():
+            raise SystemExit(
+                "Recomendacao final nao encontrada. Execute `python -m src.final_comparison`."
+            )
+        model = read_json(recommendation_path)["recommended_primary_model"]
     if not model.endswith(".joblib"):
         model = f"{model}.joblib"
     path = MODELS_DIR / model
@@ -269,7 +276,11 @@ def analyze_errors(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analisa os erros e pares de generos confundidos.")
     parser.add_argument("--data", type=Path, default=DEFAULT_PROCESSED_DATA)
-    parser.add_argument("--model", default="baseline_tfidf_logreg_word_1_2_cv5")
+    parser.add_argument(
+        "--model",
+        default="best",
+        help="Modelo .joblib ou 'best' para analisar o modelo principal recomendado.",
+    )
     parser.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
     parser.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
     parser.add_argument("--top", type=int, default=10)

@@ -40,7 +40,11 @@ Para treinar CNN ou LSTM com PyTorch:
 pip install -r requirements-neural.txt
 ```
 
-As dependencias de Transformers continuam opcionais porque sao mais pesadas.
+Para executar o BERTimbau:
+
+```bash
+pip install -r requirements-transformer.txt
+```
 
 ## Preparar Dados
 
@@ -102,6 +106,18 @@ Artefatos gerados:
 python -m src.evaluate --all
 ```
 
+Gerar a comparacao final de desempenho, tempo e tamanho:
+
+```bash
+python -m src.final_comparison
+```
+
+Saidas:
+
+- `results/metrics/comparacao_final_modelos.csv`
+- `results/figures/comparacao_final_modelos.png`
+- `results/analysis/recomendacao_modelo_final.json`
+
 ## Analisar Erros
 
 Gerar os principais pares de generos confundidos pelo baseline principal:
@@ -120,6 +136,12 @@ As etapas de treinamento, configuracoes e metricas ficam registradas em:
 docs/registro_treinamento.md
 ```
 
+As caracteristicas, limitacoes e usos recomendados do modelo final ficam em:
+
+```text
+docs/model_card.md
+```
+
 ## Analise Lexical
 
 ```bash
@@ -136,13 +158,19 @@ Saidas:
 ## Predizer Genero de Nova Letra
 
 ```bash
-python -m src.predict --model baseline_tfidf_logreg --text "texto da letra aqui"
+python -m src.predict --text "texto da letra aqui"
+```
+
+Usar o modelo principal recomendado pela comparacao final:
+
+```bash
+python -m src.predict --model best --text "texto da letra aqui"
 ```
 
 Ou por arquivo:
 
 ```bash
-python -m src.predict --model baseline_tfidf_logreg --file exemplo_letra.txt
+python -m src.predict --file exemplo_letra.txt
 ```
 
 ## Modelos Neurais
@@ -161,19 +189,54 @@ Treinar LSTM:
 python -m src.train_lstm --epochs 8
 ```
 
+Treinar LSTM com GloVe NILC pre-treinado:
+
+```bash
+python -m src.train_lstm --experiment-name lstm_pytorch_nilc_glove_100d --pretrained-embeddings nilc-glove-100d --embedding-dim 100 --epochs 8
+```
+
+Treinar a configuracao regularizada, selecionando pelo F1 macro:
+
+```bash
+python -m src.train_lstm --experiment-name lstm_pytorch_nilc_glove_100d_tuned --pretrained-embeddings nilc-glove-100d --embedding-dim 100 --hidden-dim 64 --dropout 0.6 --weight-decay 0.02 --label-smoothing 0.05 --gradient-clip 1.0 --monitor valid_f1_macro --patience 3 --epochs 10
+```
+
 Predizer com a CNN:
 
 ```bash
 python -m src.predict --model cnn_pytorch --text "texto da letra aqui"
 ```
 
-O modulo `src.train_bertimbau` esta documentado como etapa opcional porque o fine-tuning de Transformers pode exigir mais memoria, tempo ou GPU.
+Predizer com a LSTM bidirecional:
+
+```bash
+python -m src.predict --model lstm_pytorch --text "texto da letra aqui"
+```
+
+Treinar BERTimbau com o encoder congelado:
+
+```bash
+python -m src.train_bertimbau --experiment-name bertimbau_base_frozen --epochs 20 --batch-size 64 --classifier-batch-size 256 --max-len 128 --learning-rate 0.001 --trainable-encoder-layers 0 --cache-frozen-features --patience 4 --device cpu
+```
+
+Predizer com BERTimbau:
+
+```bash
+python -m src.predict --model bertimbau_base_frozen --text "texto da letra aqui"
+```
+
+O script tambem permite liberar as ultimas camadas do encoder com `--trainable-encoder-layers N`, mas essa configuracao exige muito mais tempo e memoria.
 
 Proximas etapas sugeridas:
 
-1. Rodar CNN e LSTM com poucas epocas para comparacao inicial.
-2. Comparar custo computacional, acuracia e F1 macro dos modelos.
-3. Implementar ou rodar BERTimbau como experimento opcional com Hugging Face Transformers.
+1. Considerar fine-tuning parcial do BERTimbau caso haja acesso a GPU.
+2. Avaliar combinacao com atributos de audio em trabalhos futuros.
+
+## Recomendacao Final
+
+O modelo principal recomendado e o TF-IDF de palavras 1-2 com Logistic Regression. Ele apresentou o melhor F1 macro medio na validacao cruzada, treinou em 11,7 segundos e gerou um artefato de 5,3 MB.
+
+O TF-IDF combinado de palavras e caracteres obteve o maior F1 macro no teste externo, mas teve media inferior na validacao cruzada e custo maior. O BERTimbau congelado foi o melhor neural, ainda abaixo dos modelos classicos.
 
 ## Observacao Sobre Reprodutibilidade
 

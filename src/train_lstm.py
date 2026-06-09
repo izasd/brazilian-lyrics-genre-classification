@@ -18,7 +18,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hidden-dim", type=int, default=96)
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--learning-rate", type=float, default=0.001)
+    parser.add_argument("--weight-decay", type=float, default=0.01)
+    parser.add_argument("--label-smoothing", type=float, default=0.0)
+    parser.add_argument("--gradient-clip", type=float)
     parser.add_argument("--patience", type=int, default=2)
+    parser.add_argument(
+        "--monitor",
+        choices=["valid_loss", "valid_f1_macro"],
+        default="valid_loss",
+        help="Metrica usada para selecionar os melhores pesos e aplicar early stopping.",
+    )
+    parser.add_argument("--experiment-name")
+    parser.add_argument(
+        "--pretrained-embeddings",
+        choices=["nilc-glove-100d"],
+        help="Inicializa a camada de embedding com vetores pre-treinados.",
+    )
+    parser.add_argument(
+        "--freeze-embeddings",
+        action="store_true",
+        help="Nao atualiza os embeddings pre-treinados durante o treino.",
+    )
     parser.add_argument("--device", choices=["auto", "cpu", "cuda"], default="auto")
     parser.add_argument("--test-size", type=float, default=DEFAULT_TEST_SIZE)
     parser.add_argument("--random-state", type=int, default=DEFAULT_RANDOM_STATE)
@@ -38,8 +58,15 @@ def main() -> None:
         hidden_dim=args.hidden_dim,
         dropout=args.dropout,
         learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        label_smoothing=args.label_smoothing,
+        gradient_clip=args.gradient_clip,
         patience=args.patience,
+        monitor=args.monitor,
         device_name=args.device,
+        experiment_name=args.experiment_name,
+        pretrained_embeddings=args.pretrained_embeddings,
+        freeze_embeddings=args.freeze_embeddings,
         test_size=args.test_size,
         random_state=args.random_state,
     )

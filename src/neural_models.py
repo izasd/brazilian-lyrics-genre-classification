@@ -22,6 +22,7 @@ from .io_utils import require_package, write_json
 TOKEN_RE = re.compile(r"\b\w+\b", flags=re.UNICODE)
 PAD_TOKEN = "<PAD>"
 OOV_TOKEN = "<OOV>"
+NILC_GLOVE_100D_REPO = "nilc-nlp/glove-100d"
 
 
 def load_dataframe(path: Path):
@@ -118,13 +119,84 @@ def build_torch_model(
 
             def forward(self, inputs):
                 embedded = self.embedding(inputs)
-                _, (hidden, _) = self.lstm(embedded)
+                lengths = inputs.ne(0).sum(dim=1).clamp(min=1).cpu()
+                packed = nn.utils.rnn.pack_padded_sequence(
+                    embedded,
+                    lengths,
+                    batch_first=True,
+                    enforce_sorted=False,
+                )
+                _, (hidden, _) = self.lstm(packed)
                 features = torch.cat((hidden[-2], hidden[-1]), dim=1)
                 return self.classifier(self.dropout(features))
 
         return TextBiLSTM()
 
     raise SystemExit(f"Modelo neural invalido: {model_kind}")
+
+
+def initialize_pretrained_embeddings(
+    model,
+    vocabulary: dict[str, int],
+    source: Literal["nilc-glove-100d"],
+    *,
+    freeze: bool,
+) -> dict[str, object]:
+    torch = require_package("torch")
+
+    if source != "nilc-glove-100d":
+        raise SystemExit(f"Fonte de embeddings invalida: {source}")
+
+    huggingface_hub = require_package("huggingface_hub", "huggingface-hub")
+    safetensors = require_package("safetensors")
+    embeddings_path = huggingface_hub.hf_hub_download(
+        repo_id=NILC_GLOVE_100D_REPO,
+        filename="embeddings.safetensors",
+    )
+    vocabulary_path = huggingface_hub.hf_hub_download(
+        repo_id=NILC_GLOVE_100D_REPO,
+        filename="vocab.txt",
+    )
+
+    target_tokens = set(vocabulary).difference({PAD_TOKEN, OOV_TOKEN})
+    pretrained_indices: dict[str, int] = {}
+    with Path(vocabulary_path).open("r", encoding="utf-8") as file:
+        for index, line in enumerate(file):
+            token = line.rstrip("\r\n")
+            if token in target_tokens:
+                pretrained_indices[token] = index
+
+    with safetensors.safe_open(embeddings_path, framework="pt", device="cpu") as file:
+        pretrained = file.get_tensor("embeddings")
+        pretrained_dim = int(pretrained.shape[1])
+        if pretrained_dim != model.embedding.embedding_dim:
+            raise SystemExit(
+                "Dimensao dos embeddings incompativel: "
+                f"modelo={model.embedding.embedding_dim}, pre-treinado={pretrained_dim}."
+            )
+        matched_tokens = sorted(pretrained_indices, key=vocabulary.__getitem__)
+        source_rows = torch.tensor(
+            [pretrained_indices[token] for token in matched_tokens],
+            dtype=torch.long,
+        )
+        target_rows = torch.tensor(
+            [vocabulary[token] for token in matched_tokens],
+            dtype=torch.long,
+        )
+        with torch.no_grad():
+            model.embedding.weight[target_rows] = pretrained.index_select(0, source_rows)
+            model.embedding.weight[vocabulary[PAD_TOKEN]].zero_()
+
+    model.embedding.weight.requires_grad = not freeze
+    eligible_tokens = max(1, len(vocabulary) - 2)
+    return {
+        "embedding_source": source,
+        "embedding_repository": NILC_GLOVE_100D_REPO,
+        "pretrained_tokens_found": len(pretrained_indices),
+        "pretrained_tokens_total": eligible_tokens,
+        "pretrained_coverage": len(pretrained_indices) / eligible_tokens,
+        "embeddings_frozen": freeze,
+    }
 
 
 def make_data_loader(features, targets, *, batch_size: int, shuffle: bool, random_state: int):
@@ -179,6 +251,13 @@ def save_training_history(history: list[dict[str, float]], output_path: Path, ti
 
     axes[1].plot(epochs, [row["train_accuracy"] for row in history], marker="o", label="Treino")
     axes[1].plot(epochs, [row["valid_accuracy"] for row in history], marker="o", label="Validacao")
+    if "valid_f1_macro" in history[0]:
+        axes[1].plot(
+            epochs,
+            [row["valid_f1_macro"] for row in history],
+            marker="o",
+            label="F1 macro validacao",
+        )
     axes[1].set_title("Acuracia")
     axes[1].set_xlabel("Epoca")
     axes[1].legend()
@@ -204,12 +283,20 @@ def train_torch_text_model(
     learning_rate: float,
     patience: int,
     device_name: str,
+    experiment_name: str | None = None,
+    pretrained_embeddings: Literal["nilc-glove-100d"] | None = None,
+    freeze_embeddings: bool = False,
+    weight_decay: float = 0.01,
+    label_smoothing: float = 0.0,
+    gradient_clip: float | None = None,
+    monitor: Literal["valid_loss", "valid_f1_macro"] = "valid_loss",
     test_size: float = DEFAULT_TEST_SIZE,
     random_state: int = DEFAULT_RANDOM_STATE,
 ) -> dict[str, object]:
     np = require_package("numpy")
     torch = require_package("torch")
     require_package("sklearn", "scikit-learn")
+    from sklearn.metrics import f1_score
     from sklearn.model_selection import train_test_split
 
     ensure_project_dirs()
@@ -217,6 +304,10 @@ def train_torch_text_model(
     torch.manual_seed(random_state)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(random_state)
+    if not 0.0 <= label_smoothing < 1.0:
+        raise SystemExit("--label-smoothing precisa estar no intervalo [0, 1).")
+    if gradient_clip is not None and gradient_clip <= 0:
+        raise SystemExit("--gradient-clip precisa ser maior que zero.")
 
     device = resolve_device(device_name)
     df = load_dataframe(data_path)
@@ -274,13 +365,39 @@ def train_torch_text_model(
         embedding_dim=embedding_dim,
         hidden_dim=hidden_dim,
         dropout=dropout,
-    ).to(device)
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+    )
+    embedding_metadata: dict[str, object] = {
+        "embedding_source": "random",
+        "pretrained_tokens_found": 0,
+        "pretrained_tokens_total": max(1, len(vocabulary) - 2),
+        "pretrained_coverage": 0.0,
+        "embeddings_frozen": False,
+    }
+    if pretrained_embeddings:
+        embedding_metadata = initialize_pretrained_embeddings(
+            model,
+            vocabulary,
+            pretrained_embeddings,
+            freeze=freeze_embeddings,
+        )
+        print(
+            "Cobertura dos embeddings pre-treinados: "
+            f"{embedding_metadata['pretrained_tokens_found']}/"
+            f"{embedding_metadata['pretrained_tokens_total']} "
+            f"({embedding_metadata['pretrained_coverage']:.2%})"
+        )
+    model = model.to(device)
+    criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+    )
 
     history: list[dict[str, float]] = []
     best_state = copy.deepcopy(model.state_dict())
-    best_valid_loss = float("inf")
+    best_metric = float("inf") if monitor == "valid_loss" else float("-inf")
+    best_epoch = 0
     epochs_without_improvement = 0
     started_at = time.perf_counter()
 
@@ -297,29 +414,48 @@ def train_torch_text_model(
             logits = model(inputs)
             loss = criterion(logits, batch_targets)
             loss.backward()
+            if gradient_clip is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
             optimizer.step()
 
             train_loss_total += float(loss.item()) * len(batch_targets)
             train_correct += int((logits.argmax(dim=1) == batch_targets).sum().item())
             train_examples += len(batch_targets)
 
-        valid_loss, valid_accuracy, _, _ = evaluate_model(model, valid_loader, criterion, device)
+        valid_loss, valid_accuracy, valid_target_ids, valid_pred_ids = evaluate_model(
+            model,
+            valid_loader,
+            criterion,
+            device,
+        )
+        valid_f1_macro = float(
+            f1_score(valid_target_ids, valid_pred_ids, average="macro", zero_division=0)
+        )
         row = {
             "epoch": float(epoch),
             "train_loss": train_loss_total / max(1, train_examples),
             "train_accuracy": train_correct / max(1, train_examples),
             "valid_loss": valid_loss,
             "valid_accuracy": valid_accuracy,
+            "valid_f1_macro": valid_f1_macro,
         }
         history.append(row)
         print(
             f"Epoca {epoch:02d}/{epochs} - "
             f"loss: {row['train_loss']:.4f} - acc: {row['train_accuracy']:.4f} - "
-            f"val_loss: {valid_loss:.4f} - val_acc: {valid_accuracy:.4f}"
+            f"val_loss: {valid_loss:.4f} - val_acc: {valid_accuracy:.4f} - "
+            f"val_f1_macro: {valid_f1_macro:.4f}"
         )
 
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
+        current_metric = valid_loss if monitor == "valid_loss" else valid_f1_macro
+        improved = (
+            current_metric < best_metric
+            if monitor == "valid_loss"
+            else current_metric > best_metric
+        )
+        if improved:
+            best_metric = current_metric
+            best_epoch = epoch
             best_state = copy.deepcopy(model.state_dict())
             epochs_without_improvement = 0
         else:
@@ -335,7 +471,7 @@ def train_torch_text_model(
     y_pred = [id_to_label[idx] for idx in test_pred_ids]
     metrics = compute_metrics(y_true, y_pred)
 
-    model_name = f"{model_kind}_pytorch"
+    model_name = experiment_name or f"{model_kind}_pytorch"
     metrics.update(
         {
             "model": model_name,
@@ -352,17 +488,25 @@ def train_torch_text_model(
             "hidden_dim": hidden_dim,
             "dropout": dropout,
             "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "label_smoothing": label_smoothing,
+            "gradient_clip": gradient_clip,
+            "monitor": monitor,
             "batch_size": batch_size,
             "epochs_requested": epochs,
             "epochs_trained": len(history),
             "patience": patience,
             "training_seconds": training_seconds,
-            "best_valid_loss": best_valid_loss,
+            "best_epoch": best_epoch,
+            "best_monitor_value": best_metric,
+            "best_valid_loss": min(row["valid_loss"] for row in history),
+            "best_valid_f1_macro": max(row["valid_f1_macro"] for row in history),
             "history": history,
             "prediction_distribution": dict(Counter(y_pred)),
             "class_distribution": {
                 str(key): int(value) for key, value in df["genre"].value_counts().to_dict().items()
             },
+            **embedding_metadata,
         }
     )
 
@@ -379,6 +523,7 @@ def train_torch_text_model(
             "hidden_dim": hidden_dim,
             "dropout": dropout,
             "max_len": max_len,
+            "embedding_source": embedding_metadata["embedding_source"],
         },
         model_path,
     )

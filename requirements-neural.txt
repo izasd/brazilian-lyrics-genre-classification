@@ -1,2 +1,4 @@
 -r requirements.txt
 torch>=2.12
+huggingface-hub>=0.34
+safetensors>=0.5
